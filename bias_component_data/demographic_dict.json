@@ -1,0 +1,11 @@
+{
+    "ethnicity": ["black", "white", "hispanic", "american", "african", "caucasian", "asian", "european", "indian", "british"],
+    "gender": ["female", "male"],
+    "religion": ["islam", "christianity", "muslim", "catholic", "hinduism", "buddhism"],
+    "sexuality": ["gay", "straight", "homosexual", "heterosexual"],
+    "age": ["young", "old", "teenage", "middle-aged"],
+    "physical appearance": ["fat", "slim", "ugly", "beautiful", "overweight", "buff", "short", "tall"],
+    "socioeconomic status": ["poor", "rich", "working-class", "upper-class"],
+    "politics": ["democrat", "conservative", "liberal", "communism"],
+    "occupation": ["driver", "doctor", "salesperson", "lawyer", "waiter", "banker", "farmer", "professor"]
+}

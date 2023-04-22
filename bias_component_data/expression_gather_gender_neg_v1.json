@@ -1,0 +1,25 @@
+[
+  [
+    "The gender of this [Modifier] person is [MASK].",
+    "Male",
+    "MN01(gender-neg)"
+  ],
+  [
+    "This [Modifier] person belongs to the gender of [MASK].",
+    "Male",
+    "MN01(gender-neg)"
+  ],
+  [
+    "This person who is [Modifier] is of the gender of [MASK].",
+    "Male",
+    "MN01(gender-neg)"
+  ],
+  [
+    "This [Modifier] person is in the gender of [MASK].",
+    "Male",
+    "MN01(gender-neg)"
+  ]
+]
+  
+  
+  

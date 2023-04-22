@@ -1,0 +1,2 @@
+python 2_get_kn_bias_v1.py
+python 2_analyze_kn_bias_v1.py
