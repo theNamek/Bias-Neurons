@@ -1,0 +1,23 @@
+{
+  "batch_size": 20,
+  "bert_model_path": "./handload-bert-base-cased/",
+  "data_path": "../bias_component_data/",
+  "debug": 100000,
+  "demographic1": "black",
+  "demographic2": "white",
+  "demographic_dimension": "ethnicity",
+  "do_lower_case": false,
+  "get_base": true,
+  "get_ig_gold": true,
+  "get_ig_gold_filtered": false,
+  "get_ig_gold_gap_filtered": true,
+  "get_ig_pred": false,
+  "get_pred": false,
+  "gpus": "0",
+  "max_seq_length": 128,
+  "modifier": "N",
+  "no_cuda": false,
+  "num_batch": 1,
+  "output_dir": "../bias_results_modifier/",
+  "seed": 42
+}
