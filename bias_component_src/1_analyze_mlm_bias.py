@@ -1,7 +1,3 @@
-"""
-BERT MLM runner
-"""
-
 import logging
 import argparse
 import math
@@ -10,16 +6,13 @@ import torch
 import random
 import numpy as np
 import json, jsonlines
-import pickle
 import time
 import jsonlines
 
-import transformers
 from transformers import BertTokenizer
 from custom_bert_bias import BertForMaskedLM
 import torch.nn.functional as F
 
-# set logger
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
                     level=logging.INFO)
@@ -27,26 +20,18 @@ logger = logging.getLogger(__name__)
 
 
 def example2feature(example, max_seq_length, tokenizer):
-    """Convert an example into input features"""
-    features = []
-    tokenslist = []
-
     ori_tokens = tokenizer.tokenize(example[0])
-    # All templates are simple, almost no one will exceed the length limit.
     if len(ori_tokens) > max_seq_length - 2:
         ori_tokens = ori_tokens[:max_seq_length - 2]
 
-    # add special tokens
     tokens = ["[CLS]"] + ori_tokens + ["[SEP]"]
     base_tokens = ["[UNK]"] + ["[UNK]"] * len(ori_tokens) + ["[UNK]"]
     segment_ids = [0] * len(tokens)
 
-    # Generate id and attention mask
     input_ids = tokenizer.convert_tokens_to_ids(tokens)
     baseline_ids = tokenizer.convert_tokens_to_ids(base_tokens)  # unk id
     input_mask = [1] * len(input_ids)
 
-    # Pad [PAD] tokens (id in BERT-base-cased: 0) up to the sequence length.
     padding = [0] * (max_seq_length - len(input_ids))
     input_ids += padding
     baseline_ids += padding
@@ -74,29 +59,24 @@ def example2feature(example, max_seq_length, tokenizer):
 
 
 def scaled_input(emb, batch_size, num_batch):
-    # emb: (1, ffn_size)
-    baseline = torch.zeros_like(emb)  # (1, ffn_size)
+    baseline = torch.zeros_like(emb)
 
     num_points = batch_size * num_batch
-    step = (emb - baseline) / num_points  # (1, ffn_size)
+    step = (emb - baseline) / num_points
 
-    res = torch.cat([torch.add(baseline, step * i) for i in range(num_points)], dim=0)  # (num_points, ffn_size)
+    res = torch.cat([torch.add(baseline, step * i) for i in range(num_points)], dim=0)
     return res, step[0]
 
 
-def convert_to_triplet_ig(ig_list):
-    ig_triplet = []
-    ig = np.array(ig_list)  # 12, 3072
-    # print('ig', ig)
-    # print('ig.size', ig.size)  # 12*3072
-    max_ig = ig.max()
-    print('max_ig', max_ig)
-    for i in range(ig.shape[0]):
-        for j in range(ig.shape[1]):
-            if ig[i][j] >= max_ig * 0.1:
-                ig_triplet.append([i, j, ig[i][j]])
-    print('ig_triplet len', len(ig_triplet))
-    return ig_triplet
+def convert_to_triplet_ig2(ig2_list):
+    ig2_triplet = []
+    ig2 = np.array(ig2_list)
+    max_ig2 = ig2.max()
+    for i in range(ig2.shape[0]):
+        for j in range(ig2.shape[1]):
+            if ig2[i][j] >= max_ig2 * 0.1:
+                ig2_triplet.append([i, j, ig2[i][j]])
+    return ig2_triplet
 
 
 def main():
@@ -176,7 +156,6 @@ def main():
     #                     required=True,
     #                     help="The output prefix to indentify each running of experiment. ")
 
-    # Other parameters
     parser.add_argument("--max_seq_length",
                         default=128,
                         type=int,
@@ -203,7 +182,6 @@ def main():
                         type=int,
                         default=-1,
                         help="How many examples to debug. -1 denotes no debugging")
-    # todo: to restore for multi-biases!!
     # parser.add_argument("--pt_relation",
     #                     type=str,
     #                     default=None,
@@ -213,13 +191,13 @@ def main():
     parser.add_argument("--get_pred",
                         action='store_true',
                         help="Whether to get prediction results.")
-    parser.add_argument("--get_ig_pred",
+    parser.add_argument("--get_ig2_pred",
                         action='store_true',
                         help="Whether to get integrated gradient at the predicted label.")
-    parser.add_argument("--get_ig_gold",
+    parser.add_argument("--get_ig2_gold",
                         action='store_true',
                         help="Whether to get integrated gradient at the gold label.")
-    parser.add_argument("--get_ig_gold_filtered",
+    parser.add_argument("--get_ig2_gold_filtered",
                         action='store_true',
                         help="Whether to get integrated gradient at the gold label after filtering.")
     parser.add_argument("--get_base",
@@ -228,7 +206,7 @@ def main():
     # parser.add_argument("--get_base_filtered",
     #                     action='store_true',
     #                     help="Whether to get base values after filtering. ")
-    parser.add_argument("--get_ig_gold_gap_filtered",
+    parser.add_argument("--get_ig2_gold_gap_filtered",
                         action='store_true',
                         help="Whether to get integrated gradient gap at the gold label after filtering.")
     # parser.add_argument("--get_base_gap_filtered",
@@ -243,22 +221,16 @@ def main():
                         type=int,
                         help="Num batch of an example.")
 
-    # parse arguments
     args = parser.parse_args()
 
-    # set device
     if args.no_cuda or not torch.cuda.is_available():
         device = torch.device("cpu")
         n_gpu = 0
     elif len(args.gpus) == 1:
         device = torch.device("cuda:%s" % args.gpus)
         n_gpu = 1
-    else:
-        # !!! to implement multi-gpus
-        pass
     print("device: {} n_gpu: {}, distributed training: {}".format(device, n_gpu, bool(n_gpu > 1)))
 
-    # set random seeds
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -271,7 +243,6 @@ def main():
                                    args.demographic1 + '_' + args.modifier + '_data.json')
     demo2_data_path = os.path.join(args.data_path, args.demographic_dimension,
                                    args.demographic2 + '_' + args.modifier + '_data.json')
-    print('demo1_data_path', demo1_data_path)
 
     demo1_tmp_data_path = os.path.join(args.data_path, args.demographic_dimension,
                                        args.demographic1 + '_' + args.modifier + '_allbags.json')
@@ -280,36 +251,26 @@ def main():
 
     output_prefix = 'Modifier-' + args.demographic_dimension + '-' + args.modifier
 
-    # save args
     json.dump(args.__dict__, open(os.path.join(args.output_dir, output_prefix + '.args.json'), 'w'), sort_keys=True, indent=2)
 
-    # init tokenizer
-    # tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
     tokenizer = BertTokenizer.from_pretrained(args.bert_model_path, do_lower_case=args.do_lower_case)
 
-    # Load pre-trained BERT
     print("***** CUDA.empty_cache() *****")
     torch.cuda.empty_cache()
-    # model = BertForMaskedLM.from_pretrained(args.bert_model)
     model = BertForMaskedLM.from_pretrained(args.bert_model_path)
     model.to(device)
 
-    # data parallel
     if n_gpu > 1:
         model = torch.nn.DataParallel(model)
     model.eval()
 
-    # prepare eval set
     # demo1
     if os.path.exists(demo1_tmp_data_path):
         with open(demo1_tmp_data_path, 'r') as f:
             demo1_eval_bag_list_perrel = json.load(f)
     else:
-        # with open(args.demo1_data_path, 'r') as f:
         with open(demo1_data_path, 'r') as f:
-            # demo1_eval_bag_list_all = json.load(f)
             demo1_eval_bag_list_all = json.load(f)
-        # split bag list into relations
         demo1_eval_bag_list_perrel = {}
         for bag_idx, eval_bag in enumerate(demo1_eval_bag_list_all):
             bag_rel = eval_bag[0][2].split('(')[0]
@@ -328,7 +289,6 @@ def main():
     else:
         with open(demo2_data_path, 'r') as f:
             demo2_eval_bag_list_all = json.load(f)
-        # split bag list into relations
         demo2_eval_bag_list_perrel = {}
         for bag_idx, eval_bag in enumerate(demo2_eval_bag_list_all):
             bag_rel = eval_bag[0][2].split('(')[0]
@@ -340,212 +300,151 @@ def main():
         with open(demo2_tmp_data_path, 'w') as fw:
             json.dump(demo2_eval_bag_list_perrel, fw, indent=2)
 
-    # evaluate args.debug bags for each relation
-    # data_all_allbags.json:
-    # {"relation0": [], "relation1": [], ..., "relationn": []}
-    # relation0: [bag0, bag1, bag2, ..., bagn]
-    # bag0: [sample0, sample1, ..., samplen], every bag contains all the different expressions for a single fact.
-    # sample0: [sent with [MASK], ground truth for [MASK], relation]
     for relation, eval_bag_list in demo1_eval_bag_list_perrel.items():
-        # todo: to restore for multi-biases!!
-        # if args.pt_relation is not None and relation != args.pt_relation:
-        #     continue
-        # record running time
         tic = time.perf_counter()
         with jsonlines.open(os.path.join(args.output_dir, output_prefix + '-' + args.demographic1 + '.rlt' + '.jsonl'), 'w') as demo1_fw:
             for bag_idx, eval_bag in enumerate(eval_bag_list):
                 res_dict_bag = []
                 for eval_example in eval_bag:
-                    print('*'*8)
-                    print('eval_example', eval_example)
                     eval_features, tokens_info = example2feature(eval_example, args.max_seq_length, tokenizer)
-                    # convert features to long type tensors
                     baseline_ids, input_ids, input_mask, segment_ids = eval_features['baseline_ids'], eval_features['input_ids'], eval_features['input_mask'], eval_features['segment_ids']
                     baseline_ids = torch.tensor(baseline_ids, dtype=torch.long).unsqueeze(0)
                     input_ids = torch.tensor(input_ids, dtype=torch.long).unsqueeze(0)
                     input_mask = torch.tensor(input_mask, dtype=torch.long).unsqueeze(0)
                     segment_ids = torch.tensor(segment_ids, dtype=torch.long).unsqueeze(0)
-                    baseline_ids = baseline_ids.to(device)
                     input_ids = input_ids.to(device)
                     input_mask = input_mask.to(device)
                     segment_ids = segment_ids.to(device)
 
-                    # record real input length
-                    input_len = int(input_mask[0].sum())
-
-                    # record [MASK]'s position
                     tgt_pos = tokens_info['tokens'].index('[MASK]')
 
-                    # record various results
                     res_dict = {
                         'pred': [],
-                        'ig_pred': [],
-                        'ig_gold': [],
+                        'ig2_pred': [],
+                        'ig2_gold': [],
                         'base': []
                     }
 
-                    # original pred prob
                     if args.get_pred:
                         _, logits = model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=segment_ids, tgt_pos=tgt_pos, tgt_layer=0)  # (1, n_vocab)
                         base_pred_prob = F.softmax(logits, dim=1)  # (1, n_vocab)
                         res_dict['pred'].append(base_pred_prob.tolist())
 
                     for tgt_layer in range(model.bert.config.num_hidden_layers):
-                        # print('demo1 input_ids', input_ids)
                         ffn_weights, logits = model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=segment_ids, tgt_pos=tgt_pos, tgt_layer=tgt_layer)  # (1, ffn_size), (1, n_vocab)
-                        pred_label = int(torch.argmax(logits[0, :]))  # scalar, 这里获得了pred_label，方便后面计算ig_pred
+                        pred_label = int(torch.argmax(logits[0, :]))  # scalar, 这里获得了pred_label，方便后面计算ig2_pred
                         gold_label = tokenizer.convert_tokens_to_ids(tokens_info['gold_obj'])
                         tokens_info['pred_obj'] = tokenizer.convert_ids_to_tokens(pred_label)
                         scaled_weights, weights_step = scaled_input(ffn_weights, args.batch_size, args.num_batch)  # (num_points, ffn_size), (ffn_size)
                         scaled_weights.requires_grad_(True)
 
-                        # integrated grad at the pred label for each layer
-                        # ig: integrated grad
-                        if args.get_ig_pred:
-                            ig_pred = None
+                        if args.get_ig2_pred:
+                            ig2_pred = None
                             for batch_idx in range(args.num_batch):
                                 batch_weights = scaled_weights[batch_idx * args.batch_size:(batch_idx + 1) * args.batch_size]
                                 _, grad = model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=segment_ids, tgt_pos=tgt_pos, tgt_layer=tgt_layer, tmp_score=batch_weights, tgt_label=pred_label)  # (batch, n_vocab), (batch, ffn_size)
                                 grad = grad.sum(dim=0)  # (ffn_size)
-                                ig_pred = grad if ig_pred is None else torch.add(ig_pred, grad)  # (ffn_size)
-                            ig_pred = ig_pred * weights_step  # (ffn_size)
-                            res_dict['ig_pred'].append(ig_pred.tolist())
+                                ig2_pred = grad if ig2_pred is None else torch.add(ig2_pred, grad)  # (ffn_size)
+                            ig2_pred = ig2_pred * weights_step  # (ffn_size)
+                            res_dict['ig2_pred'].append(ig2_pred.tolist())
 
-                        # integrated grad at the gold label for each layer
-                        # ig: integrated grad
-                        if args.get_ig_gold:
-                            ig_gold = None
+                        if args.get_ig2_gold:
+                            ig2_gold = None
                             for batch_idx in range(args.num_batch):
                                 batch_weights = scaled_weights[batch_idx * args.batch_size:(batch_idx + 1) * args.batch_size]
-                                # (batch, n_vocab), (batch, ffn_size)
                                 _, grad = model(input_ids=input_ids, attention_mask=input_mask,
                                                 token_type_ids=segment_ids, tgt_pos=tgt_pos, tgt_layer=tgt_layer,
                                                 tmp_score=batch_weights, tgt_label=gold_label)
-                                grad = grad.sum(dim=0)  # (ffn_size)
-                                ig_gold = grad if ig_gold is None else torch.add(ig_gold, grad)  # (ffn_size)
-                            ig_gold = ig_gold * weights_step  # (ffn_size)
-                            res_dict['ig_gold'].append(ig_gold.tolist())
+                                grad = grad.sum(dim=0)
+                                ig2_gold = grad if ig2_gold is None else torch.add(ig2_gold, grad)
+                            ig2_gold = ig2_gold * weights_step
+                            res_dict['ig2_gold'].append(ig2_gold.tolist())
 
-                        # base ffn_weights for each layer
                         if args.get_base:
                             res_dict['base'].append(ffn_weights.squeeze().tolist())
 
-                    # print('ori res_dict ig_gold len 0', len(res_dict['ig_gold']))
-                    # print('ori res_dict ig_gold len 1', len(res_dict['ig_gold'][0]))
-
-                    # if args.get_ig_gold:
-                    if args.get_ig_gold_filtered:
-                        res_dict['ig_gold'] = convert_to_triplet_ig(res_dict['ig_gold'])
-                        # print('filtered res_dict ig_gold len', len(res_dict['ig_gold']))
-                    # if args.get_base:
-                    # if args.get_base_filtered:
-                    #     res_dict['base'] = convert_to_triplet_ig(res_dict['base'])
+                    if args.get_ig2_gold_filtered:
+                        res_dict['ig2_gold'] = convert_to_triplet_ig2(res_dict['ig2_gold'])
 
                     res_dict_bag.append([tokens_info, res_dict])
 
                 demo1_fw.write(res_dict_bag)
 
-        # record running time
         toc = time.perf_counter()
         print(f"***** Relation: {relation} evaluated. Costing time: {toc - tic:0.4f} seconds *****")
 
     for relation, eval_bag_list in demo2_eval_bag_list_perrel.items():
-        # todo: to restore for multi-biases!!
-        # if args.pt_relation is not None and relation != args.pt_relation:
-        #     continue
-        # record running time
         tic = time.perf_counter()
         with jsonlines.open(os.path.join(args.output_dir, output_prefix + '-' + args.demographic2 + '.rlt' + '.jsonl'), 'w') as demo2_fw:
             for bag_idx, eval_bag in enumerate(eval_bag_list):
                 res_dict_bag = []
                 for eval_example in eval_bag:
-                    # print('*'*8)
-                    # print('eval_example', eval_example)
                     eval_features, tokens_info = example2feature(eval_example, args.max_seq_length, tokenizer)
-                    # convert features to long type tensors
                     baseline_ids, input_ids, input_mask, segment_ids = eval_features['baseline_ids'], eval_features['input_ids'], eval_features['input_mask'], eval_features['segment_ids']
                     baseline_ids = torch.tensor(baseline_ids, dtype=torch.long).unsqueeze(0)
                     input_ids = torch.tensor(input_ids, dtype=torch.long).unsqueeze(0)
                     input_mask = torch.tensor(input_mask, dtype=torch.long).unsqueeze(0)
                     segment_ids = torch.tensor(segment_ids, dtype=torch.long).unsqueeze(0)
-                    baseline_ids = baseline_ids.to(device)
                     input_ids = input_ids.to(device)
                     input_mask = input_mask.to(device)
                     segment_ids = segment_ids.to(device)
 
-                    # record real input length
-                    input_len = int(input_mask[0].sum())
-
-                    # record [MASK]'s position
                     tgt_pos = tokens_info['tokens'].index('[MASK]')
 
-                    # record various results
                     res_dict = {
                         'pred': [],
-                        'ig_pred': [],
-                        'ig_gold': [],
-                        'base': []  # ffn weights
+                        'ig2_pred': [],
+                        'ig2_gold': [],
+                        'base': []
                     }
 
-                    # original pred prob
                     if args.get_pred:
-                        _, logits = model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=segment_ids, tgt_pos=tgt_pos, tgt_layer=0)  # (1, n_vocab)
-                        base_pred_prob = F.softmax(logits, dim=1)  # (1, n_vocab)
+                        _, logits = model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=segment_ids, tgt_pos=tgt_pos, tgt_layer=0)
+                        base_pred_prob = F.softmax(logits, dim=1)
                         res_dict['pred'].append(base_pred_prob.tolist())
 
                     for tgt_layer in range(model.bert.config.num_hidden_layers):
-                        # print('demo2 input_ids', input_ids)
-                        ffn_weights, logits = model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=segment_ids, tgt_pos=tgt_pos, tgt_layer=tgt_layer)  # (1, ffn_size), (1, n_vocab)
-                        pred_label = int(torch.argmax(logits[0, :]))  # scalar, 这里获得了pred_label，方便后面计算ig_pred
+                        ffn_weights, logits = model(input_ids=input_ids, attention_mask=input_mask, token_type_ids=segment_ids, tgt_pos=tgt_pos, tgt_layer=tgt_layer)
+                        pred_label = int(torch.argmax(logits[0, :]))
                         gold_label = tokenizer.convert_tokens_to_ids(tokens_info['gold_obj'])
                         tokens_info['pred_obj'] = tokenizer.convert_ids_to_tokens(pred_label)
-                        scaled_weights, weights_step = scaled_input(ffn_weights, args.batch_size, args.num_batch)  # (num_points, ffn_size), (ffn_size)
+                        scaled_weights, weights_step = scaled_input(ffn_weights, args.batch_size, args.num_batch)
                         scaled_weights.requires_grad_(True)
 
-                        # integrated grad at the pred label for each layer
-                        # ig: integrated grad
-                        if args.get_ig_pred:
-                            ig_pred = None
+                        if args.get_ig2_pred:
+                            ig2_pred = None
                             for batch_idx in range(args.num_batch):
                                 batch_weights = scaled_weights[batch_idx * args.batch_size:(batch_idx + 1) * args.batch_size]
                                 _, grad = model(input_ids=input_ids, attention_mask=input_mask,
                                                 token_type_ids=segment_ids, tgt_pos=tgt_pos, tgt_layer=tgt_layer,
-                                                tmp_score=batch_weights, tgt_label=pred_label)  # (batch, n_vocab), (batch, ffn_size)
-                                grad = grad.sum(dim=0)  # (ffn_size)
-                                ig_pred = grad if ig_pred is None else torch.add(ig_pred, grad)  # (ffn_size)
-                            ig_pred = ig_pred * weights_step  # (ffn_size)
-                            res_dict['ig_pred'].append(ig_pred.tolist())
+                                                tmp_score=batch_weights, tgt_label=pred_label)
+                                grad = grad.sum(dim=0)
+                                ig2_pred = grad if ig2_pred is None else torch.add(ig2_pred, grad)
+                            ig2_pred = ig2_pred * weights_step
+                            res_dict['ig2_pred'].append(ig2_pred.tolist())
 
-                        # integrated grad at the gold label for each layer
-                        # ig: integrated grad
-                        if args.get_ig_gold:
-                            ig_gold = None
+                        if args.get_ig2_gold:
+                            ig2_gold = None
                             for batch_idx in range(args.num_batch):
                                 batch_weights = scaled_weights[batch_idx * args.batch_size:(batch_idx + 1) * args.batch_size]
                                 _, grad = model(input_ids=input_ids, attention_mask=input_mask,
                                                 token_type_ids=segment_ids, tgt_pos=tgt_pos, tgt_layer=tgt_layer,
-                                                tmp_score=batch_weights, tgt_label=gold_label)  # (batch, n_vocab), (batch, ffn_size)
-                                grad = grad.sum(dim=0)  # (ffn_size)
-                                ig_gold = grad if ig_gold is None else torch.add(ig_gold, grad)  # (ffn_size)
-                            ig_gold = ig_gold * weights_step  # (ffn_size)
-                            res_dict['ig_gold'].append(ig_gold.tolist())
+                                                tmp_score=batch_weights, tgt_label=gold_label)
+                                grad = grad.sum(dim=0)
+                                ig2_gold = grad if ig2_gold is None else torch.add(ig2_gold, grad)
+                            ig2_gold = ig2_gold * weights_step
+                            res_dict['ig2_gold'].append(ig2_gold.tolist())
 
-                        # base ffn_weights for each layer
                         if args.get_base:
                             res_dict['base'].append(ffn_weights.squeeze().tolist())
 
-                    # if args.get_ig_gold:
-                    if args.get_ig_gold_filtered:
-                        res_dict['ig_gold'] = convert_to_triplet_ig(res_dict['ig_gold'])
-                    # if args.get_base:
-                    # if args.get_base_filtered:
-                    #     res_dict['base'] = convert_to_triplet_ig(res_dict['base'])
+                    if args.get_ig2_gold_filtered:
+                        res_dict['ig2_gold'] = convert_to_triplet_ig2(res_dict['ig2_gold'])
 
                     res_dict_bag.append([tokens_info, res_dict])
 
                 demo2_fw.write(res_dict_bag)
 
-        # record running time
         toc = time.perf_counter()
         print(f"***** Relation: {relation} evaluated. Costing time: {toc - tic:0.4f} seconds *****")
 
@@ -553,60 +452,32 @@ def main():
         with jsonlines.open(os.path.join(args.output_dir, output_prefix + '-' + args.demographic1 + '.rlt' + '.jsonl'), 'r') as fb, \
              jsonlines.open(os.path.join(args.output_dir, output_prefix + '-' + args.demographic2 + '.rlt' + '.jsonl'), 'r') as fw, \
              jsonlines.open(os.path.join(args.output_dir, output_prefix + '-filtered-gap-rm-base-' + args.demographic1 + '-' + args.demographic2 + '.rlt' + '.jsonl'), 'w') as filf_rmb_gap:
-             # jsonlines.open(os.path.join(args.output_dir, output_prefix + '-gap-' + demo2_relation + '-' + demo1_relation + '.rlt' + '.jsonl'), 'w') as f_gap, \
-             # jsonlines.open(os.path.join(args.output_dir, output_prefix + '-filtered-gap-' + demo2_relation + '-' + demo1_relation + '.rlt' + '.jsonl'), 'w') as filf_gap:
-            # record running time
             tic = time.perf_counter()
             for demo1_res_dict_bag, demo2_res_dict_bag in zip(fb, fw):
-                gap_res_dict_bag = []
                 gap_res_dict_rmb_bag = []
                 for demo1_example, demo2_example in zip(demo1_res_dict_bag, demo2_res_dict_bag):
                     demo1_res_dict, demo2_res_dict = demo1_example[1], demo2_example[1]
-                    # print('demo1_res_dict', demo1_res_dict)
                     demo1_tokens_info, demo2_tokens_info = demo1_example[0], demo2_example[0]
-                    # print('demo1 ig_gold', demo1_res_dict['ig_gold'])
-                    demo1_ig_gold = np.array(demo1_res_dict['ig_gold'], np.float32)
+                    demo1_ig2_gold = np.array(demo1_res_dict['ig2_gold'], np.float32)
                     demo1_base = np.array(demo1_res_dict['base'], np.float32)
-                    demo2_ig_gold = np.array(demo2_res_dict['ig_gold'], np.float32)
+                    demo2_ig2_gold = np.array(demo2_res_dict['ig2_gold'], np.float32)
                     demo2_base = np.array(demo2_res_dict['base'], np.float32)
-                    # ig_gold_gap = demo1_res_dict['ig_gold'] - demo2_res_dict['ig_gold']
-                    ig_gold_gap = demo1_ig_gold - demo2_ig_gold
-                    ig_gold_gap = ig_gold_gap.tolist()
-                    # base_gap = demo1_res_dict['base'] - demo2_res_dict['base']
-                    base_gap = demo1_base - demo2_base
-                    # base_gap = base_gap.tolist()
+                    ig2_gold_gap = demo1_ig2_gold - demo2_ig2_gold
+                    ig2_gold_gap = ig2_gold_gap.tolist()
                     gap_tokens_info = {
                         "tokens": demo1_tokens_info['tokens'],
                         "gap_relation": demo1_relation + '-' + demo2_relation,
                         "gold_obj": "Black - White",
                     }
-                    # gap_res_dict = {
-                    #     'ig_gold_gap': ig_gold_gap,
-                    #     'base_gap': base_gap  # ffn weights
-                    # }
-                    # remove base_gap because its scores are all 0, 'rmb' means remove base_gap
                     gap_res_rmb_dict = {
-                        'ig_gold_gap': ig_gold_gap
+                        'ig2_gold_gap': ig2_gold_gap
                     }
-                    if args.get_ig_gold_gap_filtered:
-                        # print('ig_gold_gap 0 len', len(gap_res_dict['ig_gold_gap']))
-                        # print('ig_gold_gap 1 len', len(gap_res_dict['ig_gold_gap'][0]))
-                        # gap_res_dict['ig_gold_gap'] = convert_to_triplet_ig(gap_res_dict['ig_gold_gap'])
-                        # print('rmb ig_gold_gap 0 len', len(gap_res_rmb_dict['ig_gold_gap']))
-                        # print('rmb ig_gold_gap 1 len', len(gap_res_rmb_dict['ig_gold_gap'][0]))
-                        gap_res_rmb_dict['ig_gold_gap'] = convert_to_triplet_ig(gap_res_rmb_dict['ig_gold_gap'])
-                    # if args.get_base_gap_filtered:
-                    #     gap_res_dict['base_gap'] = convert_to_triplet_ig(gap_res_dict['base_gap'])
-                    # gap_res_dict_bag.append([gap_tokens_info, gap_res_dict])
+                    if args.get_ig2_gold_gap_filtered:
+                        gap_res_rmb_dict['ig2_gold_gap'] = convert_to_triplet_ig2(gap_res_rmb_dict['ig2_gold_gap'])
                     gap_res_dict_rmb_bag.append([gap_tokens_info, gap_res_rmb_dict])
 
                 filf_rmb_gap.write(gap_res_dict_rmb_bag)
-                # if args.get_ig_gold_gap_filtered:
-                #     # filf_gap.write(gap_res_dict_bag)
-                #     filf_rmb_gap.write(gap_res_dict_rmb_bag)
-                # else:
-                #     f_gap.write(gap_res_dict_bag)
-            # record running time
+
             toc = time.perf_counter()
             print(f"***** Relation: {demo1_relation + '-' + demo2_relation} evaluated. Costing time: {toc - tic:0.4f} seconds *****")
 

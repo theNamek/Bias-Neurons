@@ -1,5 +1,3 @@
-# proxy
-# pip install jsonlines
 CUDA_VISIBLE_DEVICES=1 python 1_analyze_mlm_bias.py \
     --bert_model_path ./handload-bert-base-cased/ \
     --black_data_path ../bias_component_data/data_ethnicity_neg_black.json \
@@ -18,6 +16,4 @@ CUDA_VISIBLE_DEVICES=1 python 1_analyze_mlm_bias.py \
     --get_base_filtered \
     --batch_size 20 \
     --num_batch 1 \
-    --debug 100000 \
-    # todo: to restore for multi-biases!!
-#    --pt_relation $1 \
+    --debug 100000

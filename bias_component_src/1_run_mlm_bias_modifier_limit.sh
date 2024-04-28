@@ -1,5 +1,3 @@
-# proxy
-# pip install jsonlines
 CUDA_VISIBLE_DEVICES=1 python 1_analyze_mlm_bias_limit.py \
     --bert_model_path ./handload-bert-base-cased/ \
     --demographic_dimension $1 \
